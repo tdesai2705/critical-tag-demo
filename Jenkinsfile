@@ -157,6 +157,23 @@ PYEOF
                                         > subset_no_mapping.txt
                                     echo "=== NO MAPPING: selected \$(wc -l < subset_no_mapping.txt) / 16 tests ==="
                                     cat subset_no_mapping.txt
+
+                                    echo "=== COMPARISON: --goal-spec combined syntax (prioritizeByTestMapping + select timePercentage=6%) ==="
+                                    PYTHONPATH=. pytest tests/ --collect-only -q \\
+                                        | grep '::' \\
+                                        | smart-tests --log-level audit subset pytest \\
+                                            --session @session.txt \\
+                                            --goal-spec "prioritizeByTestMapping(),select(timePercentage=6%)" \\
+                                            --prioritized-tests-mapping smart-tests-mapping.json \\
+                                            > subset_goalspec.txt 2> subset_goalspec_stderr.log
+                                    echo "=== GOAL-SPEC: selected \$(wc -l < subset_goalspec.txt) / 16 tests ==="
+                                    cat subset_goalspec.txt
+                                    echo "=== goal-spec audit log ==="
+                                    cat subset_goalspec_stderr.log
+                                    echo "=== goal-spec critical-test check ==="
+                                    while IFS= read -r c; do
+                                        grep -qF "\$c" subset_goalspec.txt && echo "goalspec present: \$c" || echo "goalspec MISSING: \$c"
+                                    done < critical-node-ids.txt
                                 fi
 
                                 echo "=== Selected \$(wc -l < subset.txt) / 16 tests ==="
