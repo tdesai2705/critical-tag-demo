@@ -147,6 +147,16 @@ PYEOF
                                             > subset.txt 2> subset_stderr.log
                                     echo "=== audit log ==="
                                     cat subset_stderr.log
+
+                                    echo "=== COMPARISON: same --${params.SUBSET_MODE} ${params.SUBSET_VALUE}, NO mapping ==="
+                                    PYTHONPATH=. pytest tests/ --collect-only -q \\
+                                        | grep '::' \\
+                                        | smart-tests subset pytest \\
+                                            --session @session.txt \\
+                                            --${params.SUBSET_MODE} ${params.SUBSET_VALUE} \\
+                                        > subset_no_mapping.txt
+                                    echo "=== NO MAPPING: selected \$(wc -l < subset_no_mapping.txt) / 16 tests ==="
+                                    cat subset_no_mapping.txt
                                 fi
 
                                 echo "=== Selected \$(wc -l < subset.txt) / 16 tests ==="
