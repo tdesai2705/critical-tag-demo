@@ -135,7 +135,7 @@ PYEOF
                                 if [ "${params.SMART_TESTS_OBSERVATION}" = "true" ]; then
                                     PYTHONPATH=. pytest tests/ --collect-only -q \\
                                         | grep '::' \\
-                                        | smart-tests subset pytest --session @session.txt --observation \\
+                                        | smart-tests subset pytest --session @session.txt \\
                                         > subset.txt
                                 else
                                     PYTHONPATH=. pytest tests/ --collect-only -q \\
