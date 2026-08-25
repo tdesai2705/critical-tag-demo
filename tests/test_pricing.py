@@ -1,25 +1,69 @@
 import pytest
-from app.pricing import apply_discount, calculate_tax, total_with_tax
+
+from app.pricing import process, LIMIT, RATE
 
 
-@pytest.mark.critical
-def test_apply_discount_reduces_price_correctly():
-    assert apply_discount(100, 20) == 80.0
+def _expected(value):
+    return round(value * RATE, 2)
 
 
-@pytest.mark.critical
-def test_apply_discount_rejects_out_of_range_percent():
+PARAM_VALUES = sorted({
+    0, 1, 2, 3, 5,
+    max(1, LIMIT // 20),
+    max(1, LIMIT // 10),
+    LIMIT // 4,
+    LIMIT // 3,
+    LIMIT // 2,
+    (LIMIT * 2) // 3,
+    (LIMIT * 3) // 4,
+    max(0, LIMIT - 5),
+    max(0, LIMIT - 2),
+})
+
+
+@pytest.mark.parametrize("value", PARAM_VALUES)
+def test_process_normal_values(value):
+    assert process(value) == _expected(value)
+
+
+def test_process_negative_raises():
     with pytest.raises(ValueError):
-        apply_discount(100, 150)
+        process(-1)
 
 
-def test_apply_discount_zero_percent_is_noop():
-    assert apply_discount(50, 0) == 50.0
+def test_process_over_limit_raises():
+    with pytest.raises(ValueError):
+        process(LIMIT + 1)
 
 
-def test_calculate_tax_default_rate():
-    assert calculate_tax(100) == 8.0
+def test_process_zero_is_zero():
+    assert process(0) == 0.0
 
 
-def test_total_with_tax_adds_correctly():
-    assert total_with_tax(100) == 108.0
+def test_process_returns_float():
+    assert isinstance(process(10 if LIMIT > 10 else 0), float)
+
+
+def test_process_rounds_to_two_decimals():
+    result = process(min(7, LIMIT))
+    assert result == round(result, 2)
+
+
+def test_process_is_monotonic_for_small_step():
+    low = min(3, LIMIT)
+    high = min(4, LIMIT)
+    if low != high:
+        assert process(high) >= process(low)
+
+
+@pytest.mark.critical
+def test_process_at_exact_limit_succeeds():
+    # boundary case -- this is the one the bug-toggle line breaks
+    assert process(LIMIT) == _expected(LIMIT)
+
+
+@pytest.mark.critical
+def test_process_core_business_rule():
+    # core invariant for this module -- must never silently break
+    midpoint = LIMIT // 2
+    assert process(midpoint) == _expected(midpoint)

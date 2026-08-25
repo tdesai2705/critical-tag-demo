@@ -1,12 +1,12 @@
-"""reservable stock quantity module. LIMIT is a real boundary business rule --
+"""income bracket threshold module. LIMIT is a real boundary business rule --
 the `> LIMIT` check below is the deliberate bug-toggle point used to build
 genuine (not synthetic) pass/fail history for Smart Tests confidence-model
 training: flipping `>` to `>=` is a real off-by-one boundary bug that makes
 `test_process_at_exact_limit_succeeds` fail deterministically.
 """
 
-LIMIT = 200
-RATE = 0.95
+LIMIT = 100000
+RATE = 0.7
 
 
 def process(value):

@@ -6,12 +6,18 @@
 // https://docs.cloudbees.com/docs/cloudbees-smart-tests/latest/send-data-to-smart-tests/subset/combine-with-rule-based-test-selection
 // (mapping: repo -> real source directory -> list of test paths)?
 //
-// 3 features (pricing, shipping, inventory), each with 2 tests marked
-// @pytest.mark.critical. Mapping maps each feature's real source directory
-// to ONLY its critical tests (not all tests) -- that's the "tag" proxy.
+// 6 features (pricing, shipping, inventory, tax, returns, loyalty), each
+// with ~20 tests and 2 marked @pytest.mark.critical (~127 tests total, 12
+// critical). Mapping maps each feature's real source directory to ONLY its
+// critical tests (not all tests) -- that's the "tag" proxy.
 //
-// Small + fast on purpose (16 tests, ~3s total) so duration history builds
-// in seconds, not hours, unlike the real todo-backend app.
+// Scaled up from the original 16-test/3-feature version so percentage
+// budgets (especially --confidence 90/95/100%, which is what Amadeus
+// actually plans to run) map to meaningful test counts instead of 1-2 test
+// rounding artifacts. Each module also has a real, deterministic boundary
+// bug-toggle (see BUG-TOGGLE-LINE in app/*/__init__.py) used to build
+// genuine pass/fail history -- confidence-mode subsetting needs real
+// failures to train on, not just duration variance.
 // ─────────────────────────────────────────────────────────────────────────────
 
 pipeline {
@@ -121,8 +127,12 @@ PYEOF
                     withCredentials([string(credentialsId: "smart-tests-token-${params.WORKSPACE_TARGET}", variable: 'SMART_TESTS_TOKEN')]) {
                         script {
                             def obsFlag = params.SMART_TESTS_OBSERVATION ? '--observation' : ''
+                            def goalSelectExpr = params.SUBSET_MODE == 'target' ? "timePercentage=${params.SUBSET_VALUE}" : "confidence=${params.SUBSET_VALUE}"
                             sh """
                                 mkdir -p test-results
+
+                                PYTHONPATH=. pytest tests/ --collect-only -q | grep '::' > all-tests.txt || true
+                                TOTAL=\$(wc -l < all-tests.txt)
 
                                 smart-tests record session \\
                                     --build ${BUILD_TAG} \\
@@ -130,16 +140,14 @@ PYEOF
                                     ${obsFlag} \\
                                     > session.txt
 
-                                echo "Session: \$(cat session.txt) | Observation: ${params.SMART_TESTS_OBSERVATION} | Workspace: ${params.WORKSPACE_TARGET}"
+                                echo "Session: \$(cat session.txt) | Observation: ${params.SMART_TESTS_OBSERVATION} | Workspace: ${params.WORKSPACE_TARGET} | Total tests: \$TOTAL"
 
                                 if [ "${params.SMART_TESTS_OBSERVATION}" = "true" ]; then
-                                    PYTHONPATH=. pytest tests/ --collect-only -q \\
-                                        | grep '::' \\
+                                    cat all-tests.txt \\
                                         | smart-tests subset pytest --session @session.txt \\
                                         > subset.txt
                                 else
-                                    PYTHONPATH=. pytest tests/ --collect-only -q \\
-                                        | grep '::' \\
+                                    cat all-tests.txt \\
                                         | smart-tests --log-level audit subset pytest \\
                                             --session @session.txt \\
                                             --${params.SUBSET_MODE} ${params.SUBSET_VALUE} \\
@@ -149,24 +157,22 @@ PYEOF
                                     cat subset_stderr.log
 
                                     echo "=== COMPARISON: same --${params.SUBSET_MODE} ${params.SUBSET_VALUE}, NO mapping ==="
-                                    PYTHONPATH=. pytest tests/ --collect-only -q \\
-                                        | grep '::' \\
+                                    cat all-tests.txt \\
                                         | smart-tests subset pytest \\
                                             --session @session.txt \\
                                             --${params.SUBSET_MODE} ${params.SUBSET_VALUE} \\
                                         > subset_no_mapping.txt
-                                    echo "=== NO MAPPING: selected \$(wc -l < subset_no_mapping.txt) / 16 tests ==="
+                                    echo "=== NO MAPPING: selected \$(wc -l < subset_no_mapping.txt) / \$TOTAL tests ==="
                                     cat subset_no_mapping.txt
 
-                                    echo "=== COMPARISON: --goal-spec combined syntax (prioritizeByTestMapping + select timePercentage=6%) ==="
-                                    PYTHONPATH=. pytest tests/ --collect-only -q \\
-                                        | grep '::' \\
+                                    echo "=== COMPARISON: --goal-spec combined syntax (prioritizeByTestMapping + select(${goalSelectExpr})) -- SAME BUDGET as the separate-flags run above ==="
+                                    cat all-tests.txt \\
                                         | smart-tests --log-level audit subset pytest \\
                                             --session @session.txt \\
-                                            --goal-spec "prioritizeByTestMapping(),select(timePercentage=6%)" \\
+                                            --goal-spec "prioritizeByTestMapping(),select(${goalSelectExpr})" \\
                                             --prioritized-tests-mapping smart-tests-mapping.json \\
                                             > subset_goalspec.txt 2> subset_goalspec_stderr.log
-                                    echo "=== GOAL-SPEC: selected \$(wc -l < subset_goalspec.txt) / 16 tests ==="
+                                    echo "=== GOAL-SPEC: selected \$(wc -l < subset_goalspec.txt) / \$TOTAL tests ==="
                                     cat subset_goalspec.txt
                                     echo "=== goal-spec audit log ==="
                                     cat subset_goalspec_stderr.log
@@ -176,7 +182,7 @@ PYEOF
                                     done < critical-node-ids.txt
                                 fi
 
-                                echo "=== Selected \$(wc -l < subset.txt) / 16 tests ==="
+                                echo "=== Selected \$(wc -l < subset.txt) / \$TOTAL tests ==="
                                 cat subset.txt
 
                                 echo "=== Critical-test check ==="

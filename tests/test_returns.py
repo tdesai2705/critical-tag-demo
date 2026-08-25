@@ -1,6 +1,6 @@
 import pytest
 
-from app.inventory import process, LIMIT, RATE
+from app.returns import process, LIMIT, RATE
 
 
 def _expected(value):
