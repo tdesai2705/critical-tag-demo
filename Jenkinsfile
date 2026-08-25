@@ -45,7 +45,7 @@ spec:
     }
 
     parameters {
-        choice(name: 'WORKSPACE_TARGET', choices: ['ptsv1', 'ptsv2'], description: 'Which clean Smart Tests workspace to record against')
+        choice(name: 'WORKSPACE_TARGET', choices: ['ptsv1', 'ptsv2', 'ptsv1-fresh'], description: 'Which clean Smart Tests workspace to record against')
         booleanParam(name: 'SMART_TESTS_OBSERVATION', defaultValue: false, description: 'Observation mode (ON to build duration history, OFF to test subsetting)')
         choice(name: 'SUBSET_MODE', choices: ['target', 'confidence'], description: 'Which optimization target to use when not in observation mode')
         string(name: 'SUBSET_VALUE', defaultValue: '20%', description: 'e.g. 20% for target, 70% for confidence')
