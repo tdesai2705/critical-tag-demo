@@ -6,7 +6,7 @@ training: flipping `>` to `>=` is a real off-by-one boundary bug that makes
 """
 
 LIMIT = 100
-RATE = 0.9
+RATE = 0.9  # premium-tier customers get this base rate before any discount stacking
 
 
 def process(value):
