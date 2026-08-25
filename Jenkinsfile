@@ -121,6 +121,7 @@ PYEOF
                     withCredentials([string(credentialsId: "smart-tests-token-${params.WORKSPACE_TARGET}", variable: 'SMART_TESTS_TOKEN')]) {
                         script {
                             def obsFlag = params.SMART_TESTS_OBSERVATION ? '--observation' : ''
+                            def goalSelectExpr = params.SUBSET_MODE == 'target' ? "timePercentage=${params.SUBSET_VALUE}" : "confidence=${params.SUBSET_VALUE}"
                             sh """
                                 mkdir -p test-results
 
@@ -158,12 +159,12 @@ PYEOF
                                     echo "=== NO MAPPING: selected \$(wc -l < subset_no_mapping.txt) / 16 tests ==="
                                     cat subset_no_mapping.txt
 
-                                    echo "=== COMPARISON: --goal-spec combined syntax (prioritizeByTestMapping + select timePercentage=6%) ==="
+                                    echo "=== COMPARISON: --goal-spec combined syntax (prioritizeByTestMapping + select(${goalSelectExpr})) -- SAME BUDGET as the separate-flags run above ==="
                                     PYTHONPATH=. pytest tests/ --collect-only -q \\
                                         | grep '::' \\
                                         | smart-tests --log-level audit subset pytest \\
                                             --session @session.txt \\
-                                            --goal-spec "prioritizeByTestMapping(),select(timePercentage=6%)" \\
+                                            --goal-spec "prioritizeByTestMapping(),select(${goalSelectExpr})" \\
                                             --prioritized-tests-mapping smart-tests-mapping.json \\
                                             > subset_goalspec.txt 2> subset_goalspec_stderr.log
                                     echo "=== GOAL-SPEC: selected \$(wc -l < subset_goalspec.txt) / 16 tests ==="

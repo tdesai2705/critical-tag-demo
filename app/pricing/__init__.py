@@ -7,6 +7,8 @@ def apply_discount(price, percent_off):
 
 
 def calculate_tax(price, tax_rate=0.08):
+    if tax_rate < 0:
+        raise ValueError("tax_rate must be non-negative")
     return round(price * tax_rate, 2)
 
 
