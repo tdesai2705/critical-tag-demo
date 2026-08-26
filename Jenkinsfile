@@ -71,9 +71,6 @@ spec:
                     steps {
                         container('node') {
                             sh '''
-                                apt-get update -qq
-                                apt-get install -y --no-install-recommends default-jre-headless git python3 python3-pip >/dev/null
-                                pip3 install --no-cache-dir --break-system-packages "smart-tests-cli~=2.0"
                                 cd js-suite && npm install --no-audit --no-fund
                             '''
                         }
@@ -139,7 +136,16 @@ spec:
 
         stage('Profile B: jest') {
             steps {
+                // smart-tests-cli requires Python 3.13+; the node image's own
+                // python3 is older, so all smart-tests CLI calls run in the
+                // 'python' container (already has 3.13 + the CLI installed),
+                // while 'node' only ever runs npm/npx. Both containers share
+                // the same pod workspace volume, so files written by one are
+                // visible to the other.
                 container('node') {
+                    sh 'cd js-suite && npx jest --listTests > ../jest-test-list.txt'
+                }
+                container('python') {
                     withCredentials([string(credentialsId: "smart-tests-token-${params.WORKSPACE_TARGET}", variable: 'SMART_TESTS_TOKEN')]) {
                         sh '''
                             smart-tests record session \
@@ -149,22 +155,22 @@ spec:
 
                             echo "=== jest profile session: $(cat session-jest.txt) ==="
 
-                            cd js-suite
-                            npx jest --listTests \
-                                | smart-tests subset jest --session @../session-jest.txt --base "${WORKSPACE}" \
-                                > ../subset-jest.txt || true
+                            cat jest-test-list.txt \
+                                | smart-tests subset jest --session @session-jest.txt --base "${WORKSPACE}" \
+                                > subset-jest.txt || true
 
                             echo "=== jest subset ==="
-                            cat ../subset-jest.txt || true
-
-                            npx jest --ci --reporters=default --reporters=jest-junit
+                            cat subset-jest.txt || true
                         '''
                     }
+                }
+                container('node') {
+                    sh 'cd js-suite && npx jest --ci --reporters=default --reporters=jest-junit'
                 }
             }
             post {
                 always {
-                    container('node') {
+                    container('python') {
                         withCredentials([string(credentialsId: "smart-tests-token-${params.WORKSPACE_TARGET}", variable: 'SMART_TESTS_TOKEN')]) {
                             // NOTE: --base must match the subset call above exactly ($WORKSPACE,
                             // the repo root) so recorded test paths line up with what subset saw.
