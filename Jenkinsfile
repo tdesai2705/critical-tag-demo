@@ -1,17 +1,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Fresh, fast, purpose-built repo for testing Usha's (Amadeus) actual ask:
-// Robot Framework can tag a test "critical" and prioritize/always-run it.
-// TTS and Playwright have no such tag. Can Smart Tests achieve the same
-// outcome via --prioritized-tests-mapping, correctly formatted per
-// https://docs.cloudbees.com/docs/cloudbees-smart-tests/latest/send-data-to-smart-tests/subset/combine-with-rule-based-test-selection
-// (mapping: repo -> real source directory -> list of test paths)?
+// Naoto's ask (relayed via Slack, Anudeep/Uday/Dinesh thread): verify that a
+// SINGLE Smart Tests workspace can cleanly record & subset against multiple
+// CLI "profiles" (i.e. different TEST_RUNNER values) at once, since users
+// currently have to use one workspace per CLI/test-runner.
 //
-// 3 features (pricing, shipping, inventory), each with 2 tests marked
-// @pytest.mark.critical. Mapping maps each feature's real source directory
-// to ONLY its critical tests (not all tests) -- that's the "tag" proxy.
-//
-// Small + fast on purpose (16 tests, ~3s total) so duration history builds
-// in seconds, not hours, unlike the real todo-backend app.
+// Per Uday: there's no separate "enable multiple profiles" toggle -- profile
+// is just the <TEST_RUNNER> argument to `record tests` / `subset`, scoped
+// per test session, not a workspace-wide setting. This pipeline verifies
+// that in practice: records TWO genuinely different profiles (pytest and
+// jest) as separate sessions into the SAME workspace, back to back, and
+// confirms both record + subset cleanly with no cross-contamination.
 // ─────────────────────────────────────────────────────────────────────────────
 
 pipeline {
@@ -34,15 +32,19 @@ spec:
     resources:
       requests: { cpu: "10m", memory: "256Mi" }
       limits: { cpu: "1", memory: "1Gi" }
+  - name: node
+    image: node:20-slim
+    command: [sleep]
+    args: [99d]
+    resources:
+      requests: { cpu: "10m", memory: "256Mi" }
+      limits: { cpu: "1", memory: "1Gi" }
 """
         }
     }
 
     parameters {
-        choice(name: 'WORKSPACE_TARGET', choices: ['ptsv1', 'ptsv2'], description: 'Which clean Smart Tests workspace to record against')
-        booleanParam(name: 'SMART_TESTS_OBSERVATION', defaultValue: false, description: 'Observation mode (ON to build duration history, OFF to test subsetting)')
-        choice(name: 'SUBSET_MODE', choices: ['target', 'confidence'], description: 'Which optimization target to use when not in observation mode')
-        string(name: 'SUBSET_VALUE', defaultValue: '20%', description: 'e.g. 20% for target, 70% for confidence')
+        choice(name: 'WORKSPACE_TARGET', choices: ['multiprofile'], description: 'Which Smart Tests workspace to record against')
     }
 
     stages {
@@ -51,15 +53,31 @@ spec:
         }
 
         stage('Install Dependencies') {
-            steps {
-                container('python') {
-                    sh '''
-                        apt-get update -qq
-                        apt-get install -y --no-install-recommends default-jre-headless git >/dev/null
-                        pip install --no-cache-dir -r requirements.txt
-                        pip install --no-cache-dir "smart-tests-cli~=2.0"
-                        smart-tests --version
-                    '''
+            parallel {
+                stage('Python deps') {
+                    steps {
+                        container('python') {
+                            sh '''
+                                apt-get update -qq
+                                apt-get install -y --no-install-recommends default-jre-headless git >/dev/null
+                                pip install --no-cache-dir -r requirements.txt
+                                pip install --no-cache-dir "smart-tests-cli~=2.0"
+                                smart-tests --version
+                            '''
+                        }
+                    }
+                }
+                stage('Node deps') {
+                    steps {
+                        container('node') {
+                            sh '''
+                                apt-get update -qq
+                                apt-get install -y --no-install-recommends default-jre-headless git curl >/dev/null
+                                curl -fsSL https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+                                cd js-suite && npm install --no-audit --no-fund
+                            '''
+                        }
+                    }
                 }
             }
         }
@@ -78,117 +96,32 @@ spec:
             }
         }
 
-        stage('Generate mapping (repo -> real directory -> critical tests only)') {
-            steps {
-                container('python') {
-                    sh '''
-                        PYTHONPATH=. pytest tests/ --collect-only -q -m critical | grep "::" > critical-node-ids.txt || true
-                        echo "Critical tests found:"
-                        cat critical-node-ids.txt
-
-                        python3 - <<'PYEOF'
-import json
-
-# test_pricing.py -> app/pricing, test_shipping.py -> app/shipping, etc.
-by_dir = {}
-with open("critical-node-ids.txt") as f:
-    for line in f:
-        node_id = line.strip()
-        if not node_id:
-            continue
-        file_path, testcase = node_id.split("::")
-        feature = file_path.split("/")[-1].replace("test_", "").replace(".py", "")
-        directory = f"app/{feature}"
-        module = file_path.replace("/", ".").rsplit(".py", 1)[0]
-        entry = f"file={file_path}#class={module}#testcase={testcase}"
-        by_dir.setdefault(directory, []).append(entry)
-
-mapping = {"format": "prioritized-tests-v1", "mappings": {".": by_dir}}
-
-with open("smart-tests-mapping.json", "w") as f:
-    json.dump(mapping, f, indent=2)
-
-print(json.dumps(mapping, indent=2))
-PYEOF
-                    '''
-                }
-            }
-        }
-
-        stage('Test') {
+        stage('Profile A: pytest') {
             steps {
                 container('python') {
                     withCredentials([string(credentialsId: "smart-tests-token-${params.WORKSPACE_TARGET}", variable: 'SMART_TESTS_TOKEN')]) {
-                        script {
-                            def obsFlag = params.SMART_TESTS_OBSERVATION ? '--observation' : ''
-                            sh """
-                                mkdir -p test-results
+                        sh '''
+                            mkdir -p test-results-pytest
 
-                                smart-tests record session \\
-                                    --build ${BUILD_TAG} \\
-                                    --test-suite critical-tag-demo \\
-                                    ${obsFlag} \\
-                                    > session.txt
+                            smart-tests record session \
+                                --build ${BUILD_TAG} \
+                                --test-suite multiprofile-pytest \
+                                > session-pytest.txt
 
-                                echo "Session: \$(cat session.txt) | Observation: ${params.SMART_TESTS_OBSERVATION} | Workspace: ${params.WORKSPACE_TARGET}"
+                            echo "=== pytest profile session: $(cat session-pytest.txt) ==="
 
-                                if [ "${params.SMART_TESTS_OBSERVATION}" = "true" ]; then
-                                    PYTHONPATH=. pytest tests/ --collect-only -q \\
-                                        | grep '::' \\
-                                        | smart-tests subset pytest --session @session.txt \\
-                                        > subset.txt
-                                else
-                                    PYTHONPATH=. pytest tests/ --collect-only -q \\
-                                        | grep '::' \\
-                                        | smart-tests --log-level audit subset pytest \\
-                                            --session @session.txt \\
-                                            --${params.SUBSET_MODE} ${params.SUBSET_VALUE} \\
-                                            --prioritized-tests-mapping smart-tests-mapping.json \\
-                                            > subset.txt 2> subset_stderr.log
-                                    echo "=== audit log ==="
-                                    cat subset_stderr.log
+                            PYTHONPATH=. pytest tests/ --collect-only -q \
+                                | grep '::' \
+                                | smart-tests subset pytest --session @session-pytest.txt \
+                                > subset-pytest.txt
 
-                                    echo "=== COMPARISON: same --${params.SUBSET_MODE} ${params.SUBSET_VALUE}, NO mapping ==="
-                                    PYTHONPATH=. pytest tests/ --collect-only -q \\
-                                        | grep '::' \\
-                                        | smart-tests subset pytest \\
-                                            --session @session.txt \\
-                                            --${params.SUBSET_MODE} ${params.SUBSET_VALUE} \\
-                                        > subset_no_mapping.txt
-                                    echo "=== NO MAPPING: selected \$(wc -l < subset_no_mapping.txt) / 16 tests ==="
-                                    cat subset_no_mapping.txt
+                            echo "=== pytest subset selected $(wc -l < subset-pytest.txt) tests ==="
+                            cat subset-pytest.txt
 
-                                    echo "=== COMPARISON: --goal-spec combined syntax (prioritizeByTestMapping + select timePercentage=6%) ==="
-                                    PYTHONPATH=. pytest tests/ --collect-only -q \\
-                                        | grep '::' \\
-                                        | smart-tests --log-level audit subset pytest \\
-                                            --session @session.txt \\
-                                            --goal-spec "prioritizeByTestMapping(),select(timePercentage=6%)" \\
-                                            --prioritized-tests-mapping smart-tests-mapping.json \\
-                                            > subset_goalspec.txt 2> subset_goalspec_stderr.log
-                                    echo "=== GOAL-SPEC: selected \$(wc -l < subset_goalspec.txt) / 16 tests ==="
-                                    cat subset_goalspec.txt
-                                    echo "=== goal-spec audit log ==="
-                                    cat subset_goalspec_stderr.log
-                                    echo "=== goal-spec critical-test check ==="
-                                    while IFS= read -r c; do
-                                        grep -qF "\$c" subset_goalspec.txt && echo "goalspec present: \$c" || echo "goalspec MISSING: \$c"
-                                    done < critical-node-ids.txt
-                                fi
-
-                                echo "=== Selected \$(wc -l < subset.txt) / 16 tests ==="
-                                cat subset.txt
-
-                                echo "=== Critical-test check ==="
-                                while IFS= read -r c; do
-                                    grep -qF "\$c" subset.txt && echo "present: \$c" || echo "MISSING: \$c"
-                                done < critical-node-ids.txt
-
-                                set --
-                                while IFS= read -r line; do set -- "\$@" "\$line"; done < subset.txt
-                                PYTHONPATH=. pytest "\$@" --junitxml=test-results/results.xml -v
-                            """
-                        }
+                            set --
+                            while IFS= read -r line; do set -- "$@" "$line"; done < subset-pytest.txt
+                            PYTHONPATH=. pytest "$@" --junitxml=test-results-pytest/results.xml -v
+                        '''
                     }
                 }
             }
@@ -196,10 +129,49 @@ PYEOF
                 always {
                     container('python') {
                         withCredentials([string(credentialsId: "smart-tests-token-${params.WORKSPACE_TARGET}", variable: 'SMART_TESTS_TOKEN')]) {
-                            sh 'smart-tests record tests pytest --session @session.txt test-results/results.xml || true'
+                            sh 'smart-tests record tests pytest --session @session-pytest.txt test-results-pytest/results.xml || true'
                         }
                     }
-                    junit 'test-results/results.xml'
+                    junit 'test-results-pytest/results.xml'
+                }
+            }
+        }
+
+        stage('Profile B: jest') {
+            steps {
+                container('node') {
+                    withCredentials([string(credentialsId: "smart-tests-token-${params.WORKSPACE_TARGET}", variable: 'SMART_TESTS_TOKEN')]) {
+                        sh '''
+                            python3 -m pip install --no-cache-dir "smart-tests-cli~=2.0" -q 2>/dev/null || pip3 install --no-cache-dir "smart-tests-cli~=2.0" -q
+
+                            smart-tests record session \
+                                --build ${BUILD_TAG} \
+                                --test-suite multiprofile-jest \
+                                > session-jest.txt
+
+                            echo "=== jest profile session: $(cat session-jest.txt) ==="
+
+                            cd js-suite
+                            npx jest --listTests \
+                                | smart-tests subset jest --session @../session-jest.txt --base .. \
+                                > ../subset-jest.txt || true
+
+                            echo "=== jest subset ==="
+                            cat ../subset-jest.txt || true
+
+                            npx jest --ci --reporters=default --reporters=jest-junit
+                        '''
+                    }
+                }
+            }
+            post {
+                always {
+                    container('node') {
+                        withCredentials([string(credentialsId: "smart-tests-token-${params.WORKSPACE_TARGET}", variable: 'SMART_TESTS_TOKEN')]) {
+                            sh 'smart-tests record tests jest --session @session-jest.txt --base js-suite js-suite/junit.xml --group jest || true'
+                        }
+                    }
+                    junit 'js-suite/junit.xml'
                 }
             }
         }
