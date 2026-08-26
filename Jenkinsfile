@@ -72,8 +72,8 @@ spec:
                         container('node') {
                             sh '''
                                 apt-get update -qq
-                                apt-get install -y --no-install-recommends default-jre-headless git curl >/dev/null
-                                curl -fsSL https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+                                apt-get install -y --no-install-recommends default-jre-headless git python3 python3-pip >/dev/null
+                                pip3 install --no-cache-dir --break-system-packages "smart-tests-cli~=2.0"
                                 cd js-suite && npm install --no-audit --no-fund
                             '''
                         }
@@ -142,8 +142,6 @@ spec:
                 container('node') {
                     withCredentials([string(credentialsId: "smart-tests-token-${params.WORKSPACE_TARGET}", variable: 'SMART_TESTS_TOKEN')]) {
                         sh '''
-                            python3 -m pip install --no-cache-dir "smart-tests-cli~=2.0" -q 2>/dev/null || pip3 install --no-cache-dir "smart-tests-cli~=2.0" -q
-
                             smart-tests record session \
                                 --build ${BUILD_TAG} \
                                 --test-suite multiprofile-jest \
@@ -153,7 +151,7 @@ spec:
 
                             cd js-suite
                             npx jest --listTests \
-                                | smart-tests subset jest --session @../session-jest.txt --base .. \
+                                | smart-tests subset jest --session @../session-jest.txt --base "${WORKSPACE}" \
                                 > ../subset-jest.txt || true
 
                             echo "=== jest subset ==="
@@ -168,7 +166,9 @@ spec:
                 always {
                     container('node') {
                         withCredentials([string(credentialsId: "smart-tests-token-${params.WORKSPACE_TARGET}", variable: 'SMART_TESTS_TOKEN')]) {
-                            sh 'smart-tests record tests jest --session @session-jest.txt --base js-suite js-suite/junit.xml --group jest || true'
+                            // NOTE: --base must match the subset call above exactly ($WORKSPACE,
+                            // the repo root) so recorded test paths line up with what subset saw.
+                            sh 'smart-tests record tests jest --session @session-jest.txt --base "${WORKSPACE}" js-suite/junit.xml --group jest || true'
                         }
                     }
                     junit 'js-suite/junit.xml'
