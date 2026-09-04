@@ -12,6 +12,6 @@ RATE = 0.9  # premium-tier customers get this base rate before any discount stac
 def process(value):
     if value < 0:
         raise ValueError("value must be non-negative")
-    if value > LIMIT:  # BUG-TOGGLE-LINE: safe='>' buggy='>='
+    if value >= LIMIT:  # BUG-TOGGLE-LINE: safe='>' buggy='>='
         raise ValueError(f"value must not exceed {LIMIT}")  # ptsv1-fresh decisive-test marker
     return round(value * RATE, 2)
