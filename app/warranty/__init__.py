@@ -18,6 +18,6 @@ RATE = 0.65
 def process(value):
     if value < 0:
         raise ValueError("value must be non-negative")
-    if value > LIMIT:  # BUG-TOGGLE-LINE: safe='>' buggy='>='
+    if value >= LIMIT:  # BUG-TOGGLE-LINE: safe='>' buggy='>='
         raise ValueError(f"value must not exceed {LIMIT}")
     return round(value * RATE, 2)
